@@ -2,6 +2,7 @@ package multicast.simulator;
 
 import java.io.*;
 import java.net.*;
+import java.nio.channels.AsynchronousCloseException;
 import java.util.*;
 import java.util.concurrent.*;
 
@@ -23,13 +24,17 @@ public class Node {
     private ConcurrentHashMap<Integer,Integer> expected_messages = new ConcurrentHashMap<>();
     private ConcurrentHashMap<Integer, Message> sent_messages = new ConcurrentHashMap<>();
 
+    private Thread multicastThread;
+    private Thread serverThread;
+    private Thread sendThread;
+
     private volatile boolean running = true;
 
     public Node(int node_id, String server_host, int server_port) throws Exception {
         this.node_id = node_id;
 
         serverSocket = new Socket(server_host, server_port);
-        System.out.println("Node " + node_id + " connected");
+        System.out.println(ANSIColors.BLUE + "NODE [" + node_id + "]: connected" + ANSIColors.RESET);
         serverOut = new ObjectOutputStream(serverSocket.getOutputStream());
         serverIn = new ObjectInputStream(serverSocket.getInputStream());
 
@@ -39,10 +44,17 @@ public class Node {
     }
 
     public void start() {
-        System.out.println("Node " + node_id + " started");
-        new Thread(this::listenMulticast).start();
-        new Thread(this::sendMessages).start();
-        new Thread(this::listenServer).start();
+        System.out.println(ANSIColors.BLUE + "NODE [" + node_id + "]: started" + ANSIColors.RESET);
+        multicastThread = new Thread(this::listenMulticast);
+        sendThread = new Thread(this::sendMessages);
+        serverThread = new Thread(this::listenServer);
+
+        multicastThread.start();
+        sendThread.start();
+        serverThread.start();
+
+        this.multicastThread = multicastThread;
+        this.serverThread = serverThread;
     }
 
     private void sendMessages() {
@@ -73,9 +85,9 @@ public class Node {
 
                 if (random.nextDouble() > LOSS_PROBABILITY) {
                     sendMulticast(msg);
-                    System.out.println("Node " + node_id + " sent: " + msg);
+                    System.out.println(ANSIColors.GREEN + "NODE [" + node_id + "]: sent -> " + msg + ANSIColors.RESET);
                 } else {
-                    System.out.println("Node " + node_id + " message lost: " + msg);
+                    System.out.println(ANSIColors.RED + "NODE [" + node_id + "]: message lost -> " + msg + ANSIColors.RESET);
                 }
 
             } catch (Exception e) {
@@ -99,7 +111,7 @@ public class Node {
 
                 Message msg = (Message) ois.readObject();
                 handleMessage(msg);
-
+            } catch (SocketException | AsynchronousCloseException e){
             } catch (Exception e) {
                 e.printStackTrace();
             }
@@ -108,7 +120,7 @@ public class Node {
 
     private void handleMessage(Message msg) {
 
-        if (msg.getSenderID() == node_id) return;
+        //if (msg.getSenderID() == node_id) return;
 
         expected_messages.putIfAbsent(msg.getSenderID(), 1);
         int expected = expected_messages.get(msg.getSenderID());
@@ -137,6 +149,7 @@ public class Node {
                 }
             }
         }
+
     }
 
     private void sendLossRequest(int originalSenderId, int missingId) {
@@ -149,6 +162,8 @@ public class Node {
     }
 
     private void sendMulticast(Message msg) {
+        if (!running || udpSocket.isClosed()) return;
+
         try {
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             ObjectOutputStream oos = new ObjectOutputStream(baos);
@@ -160,7 +175,7 @@ public class Node {
                     data, data.length, multicastGroup, multicastPort);
 
             udpSocket.send(packet);
-
+        } catch (SocketException e) {
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -174,11 +189,23 @@ public class Node {
                 Message msg = (Message) serverIn.readObject();
                 if (msg.getType() == MessageType.START) {
                     started = true;
-                    System.out.println("Node " + node_id + " received START");
+                    System.out.println(ANSIColors.BLUE + "NODE [" + node_id + "]: received START" + ANSIColors.RESET);
                 } else if (msg.getType() == MessageType.STOP) {
                     running = false;
-                    udpSocket.close();
-                    serverSocket.close();
+                    System.out.println(ANSIColors.YELLOW + "NODE [" + node_id + "]: received STOP" + ANSIColors.RESET);
+                    try {
+                        udpSocket.close();
+                        serverSocket.close();
+
+                        if(multicastThread != null) {
+                            multicastThread.join();
+                        }
+
+
+                    } catch (IOException | InterruptedException e) {
+                        e.printStackTrace();
+                    }
+
                 }
             }
         } catch (Exception e) {

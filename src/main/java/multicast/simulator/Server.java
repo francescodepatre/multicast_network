@@ -2,16 +2,21 @@ package multicast.simulator;
 
 import java.io.*;
 import java.net.*;
+import java.security.spec.ECField;
 import java.util.*;
 import java.util.concurrent.*;
 
 public class Server {
+
+    private ServerSocket serverSocket;
 
     private int port;
     private int totalNodes;
 
     private Set<Integer> completedNodes = ConcurrentHashMap.newKeySet();
     private List<ClientHandler> clients = new CopyOnWriteArrayList<>();
+    private CountDownLatch shutdownLatch = new CountDownLatch(1);
+    private List<Thread> handlerThreads = new CopyOnWriteArrayList<>();
 
     public Server(int port, int totalNodes) {
         this.port = port;
@@ -19,20 +24,27 @@ public class Server {
     }
 
     public void start() throws IOException {
-        ServerSocket serverSocket = new ServerSocket(port);
-        System.out.println("Server started...");
+        serverSocket = new ServerSocket(port);
+        System.out.println(ANSIColors.YELLOW + "SERVER: Server started..." + ANSIColors.RESET);
 
         while (clients.size() < totalNodes) {
-            System.out.println("Waiting for nodes...");
+            System.out.println(ANSIColors.YELLOW + "SERVER: Waiting for nodes..." + ANSIColors.RESET);
             Socket socket = serverSocket.accept();
-            System.out.println("Node accepted...");
+            System.out.println(ANSIColors.YELLOW + "SERVER: Node accepted..." + ANSIColors.RESET);
             ClientHandler handler = new ClientHandler(socket);
             clients.add(handler);
             new Thread(handler).start();
         }
 
-        System.out.println("All nodes connected. Starting...");
+        System.out.println(ANSIColors.YELLOW + "SERVER: All nodes connected -> Starting..." + ANSIColors.RESET);
         broadcast(new Message(MessageType.START, -1, 0));
+        try{
+            shutdownLatch.await();
+        }
+        catch (Exception e){
+            e.printStackTrace();
+        }
+
     }
 
     private void broadcast(Message msg) {
@@ -46,6 +58,7 @@ public class Server {
         private Socket socket;
         private ObjectInputStream in;
         private ObjectOutputStream out;
+        private volatile boolean handlerRunning = true;
 
         public ClientHandler(Socket socket) throws IOException {
             this.socket = socket;
@@ -56,23 +69,50 @@ public class Server {
         @Override
         public void run() {
             try {
-                while (true) {
+                while (handlerRunning && !socket.isClosed()) {
                     Message msg = (Message) in.readObject();
 
                     if (msg.getType() == MessageType.COMPLETED) {
-                        System.out.println("Node " + msg.getSenderID() + " has completed.");
+                        System.out.println(ANSIColors.PURPLE + "SERVER: Node " + msg.getSenderID() + " has completed." + ANSIColors.RESET);
                         completedNodes.add(msg.getSenderID());
 
                         if (completedNodes.size() == totalNodes) {
-                            System.out.println("All node completed. Terminating.");
+                            System.out.println(ANSIColors.YELLOW + "SERVER: All node completed. Terminating." + ANSIColors.RESET);
                             broadcast(new Message(MessageType.STOP, -1, 0));
-                            break;
+
+                            for (ClientHandler client : clients) {
+                                client.closeHandler();
+                            }
+
+                            if (serverSocket != null && !serverSocket.isClosed()) {
+                                serverSocket.close();
+                            }
+
+                            shutdownLatch.countDown();
                         }
                     }
                 }
+            } catch (EOFException | SocketException e){
             } catch (Exception e) {
                 e.printStackTrace();
+            } finally {
+                close();
             }
+        }
+
+        public void close() {
+            try {
+                if (in != null) in.close();
+                if (out != null) out.close();
+                if (socket != null && !socket.isClosed()) socket.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+
+        public void closeHandler() {
+            handlerRunning = false;
+            close();
         }
 
         public void send(Message msg) {

@@ -6,15 +6,17 @@ public class Main {
         int numberOfNodes = 5;
         String hostname = "localhost";
         Node[] nodes = new Node[numberOfNodes];
+        Thread[] nodeThreads = new Thread[numberOfNodes];
 
-        new Thread(() -> {
+        Thread server_thread = new Thread(() -> {
             try {
                 Server multicastServer = new Server(port, numberOfNodes);
                 multicastServer.start();
             } catch (Exception e) {
                 e.printStackTrace();
             }
-        }).start();
+        });
+        server_thread.start();
 
         try {
             Thread.sleep(500);
@@ -28,12 +30,26 @@ public class Main {
             try{
                 nodes[i] = new Node(node_id, hostname, port);
                 final Node node = nodes[i];
-                new Thread(node::start).start();
+                nodeThreads[i] = new Thread(node::start);
+                nodeThreads[i].start();
             }
             catch (Exception e){
                 e.printStackTrace();
             }
         }
-
+        for (Thread t : nodeThreads) {
+            try {
+                t.join();
+            }catch (Exception e){
+                e.printStackTrace();
+            }
+        }
+        try {
+            server_thread.join();
+        }catch (Exception e){
+            e.printStackTrace();
+        }
+        System.out.println(ANSIColors.CYAN + "MAIN PROCESS: simluation ended." + ANSIColors.RESET);
     }
+
 }
