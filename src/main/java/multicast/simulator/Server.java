@@ -1,10 +1,17 @@
 package multicast.simulator;
 
-import java.io.*;
-import java.net.*;
-import java.security.spec.ECField;
-import java.util.*;
-import java.util.concurrent.*;
+import java.io.EOFException;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.net.SocketException;
+import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 
 public class Server {
 
@@ -29,14 +36,17 @@ public class Server {
 
         while (clients.size() < totalNodes) {
             System.out.println(ANSIColors.YELLOW + "SERVER: Waiting for nodes..." + ANSIColors.RESET);
+            //Aspetta che l'n-esimo client si connette
             Socket socket = serverSocket.accept();
             System.out.println(ANSIColors.YELLOW + "SERVER: Node accepted..." + ANSIColors.RESET);
+            //assegna l'handler al cliente
             ClientHandler handler = new ClientHandler(socket);
             clients.add(handler);
             new Thread(handler).start();
         }
 
-        System.out.println(ANSIColors.YELLOW + "SERVER: All nodes connected -> Starting..." + ANSIColors.RESET);
+        System.out.println(ANSIColors.YELLOW + "SERVER: All nodes connected -> Starting..." + ANSIColors.RESET); 
+        //Invio del messaggio di start dal server
         broadcast(new Message(MessageType.START, -1, 0));
         try{
             shutdownLatch.await();
@@ -102,9 +112,15 @@ public class Server {
 
         public void close() {
             try {
-                if (in != null) in.close();
-                if (out != null) out.close();
-                if (socket != null && !socket.isClosed()) socket.close();
+                if (in != null){
+                    in.close();
+                } 
+                if (out != null){
+                    out.close();
+                }
+                if (socket != null && !socket.isClosed()){
+                    socket.close();
+                }
             } catch (IOException e) {
                 e.printStackTrace();
             }
